@@ -1,6 +1,7 @@
 #![allow(unreachable_code)]
 
 use std::{sync::Mutex};
+use rppal::{gpio::Gpio};
 
 #[macro_use]
 extern crate rouille;
@@ -11,6 +12,7 @@ extern crate serde;
 #[derive(Serialize)]
 struct Relay {
     id: usize,
+    pin: u8,
     active: bool
 }
 
@@ -20,11 +22,17 @@ struct SerializedRelayList {
 }
 
 fn init_gpio() -> Vec<Relay> {
-    let num_relays: usize = 4;
-    let mut relays = Vec::with_capacity(num_relays);
-    for i in 1..num_relays {
+    let mut relaysnums = Vec::new();
+    relaysnums.push(7);
+    relaysnums.push(3);
+    relaysnums.push(22);
+    relaysnums.push(25);
+
+    let mut relays = Vec::with_capacity(relaysnums.len());
+    for (i, el) in relaysnums.iter().enumerate() {
         relays.push(Relay {
             id: i,
+            pin: *el,
             active: false
         });
     }
@@ -33,29 +41,16 @@ fn init_gpio() -> Vec<Relay> {
 }
 
 fn main() {
-    println!("Now listening on localhost:8000");
+    println!("Now listening on 0.0.0.0:8000");
 
     let gpios = Mutex::new(init_gpio());
 
     // The `start_server` starts listening forever on the given address.
-    rouille::start_server("localhost:8000", move |request| {
-        // The closure passed to `start_server` will be called once for each client request. It
-        // will be called multiple times concurrently when there are multiple clients.
-        // Here starts the real handler for the request.
-        //
-        // The `router!` macro is very similar to a `match` expression in core Rust. The macro
-        // takes the request as parameter and will jump to the first block that matches the
-        // request.
-        //
-        // Each of the possible blocks builds a `Response` object. Just like most things in Rust,
-        // the `router!` macro is an expression whose value is the `Response` built by the block
-        // that was called. Since `router!` is the last piece of code of this closure, the
-        // `Response` is then passed back to the `start_server` function and sent to the client.
+    rouille::start_server("0.0.0.0:8000", move |request| {
+
         router!(request,
             (GET) (/) => {
-                let mut lgpios = gpios.lock().unwrap();
-                lgpios.remove(3);
-                rouille::Response::redirect_302("/hello/world")
+                rouille::Response::redirect_302("/status")
             },
 
             (GET) (/status) => {
@@ -65,27 +60,30 @@ fn main() {
                 for gpio in lgpios.iter() {
                     local_gpios.push(Relay {
                         id: gpio.id,
+                        pin: gpio.pin,
                         active: gpio.active
                     })
                 }
-                // Builds a `Response` object that contains the "hello world" text.
                 rouille::Response::json(&SerializedRelayList { outlets: local_gpios })
             },
 
             (GET) (/off) => {
                 let mut lgpios = gpios.lock().unwrap();
                 let mut found = false;
-                let mut relay_num = 0;
+                let relay_num;
 
+				let gpio = Gpio::new().unwrap();
 
                 match request.get_param("id") {
                     Some(index) => relay_num = index.parse::<usize>().unwrap(),
                     None => return rouille::Response::text("Invalid id!"),
                 }
 
-                for gpio in lgpios.iter_mut() {
-                    if relay_num == gpio.id {
-                        (*gpio).active = false;
+                for relay in lgpios.iter_mut() {
+                    if relay_num == relay.id {
+                        (*relay).active = false;
+						let mut pin = gpio.get((*relay).pin).unwrap().into_output();
+						pin.set_low();
                         found = true;
                     }
                 }
@@ -93,7 +91,6 @@ fn main() {
                 if !found {
                     return rouille::Response::text("Invalid id!")
                 } else {
-
                     // For the same of the example we return an empty response with a 400 status code.
                     return rouille::Response::text("Success!")
                 }
@@ -103,17 +100,20 @@ fn main() {
             (GET) (/on) => {
                 let mut lgpios = gpios.lock().unwrap();
                 let mut found = false;
-                let mut relay_num = 0;
+                let relay_num;
 
+				let gpio = Gpio::new().unwrap();
 
                 match request.get_param("id") {
                     Some(index) => relay_num = index.parse::<usize>().unwrap(),
                     None => return rouille::Response::text("Invalid id!"),
                 }
 
-                for gpio in lgpios.iter_mut() {
-                    if relay_num == gpio.id {
-                        (*gpio).active = true;
+                for relay in lgpios.iter_mut() {
+                    if relay_num == relay.id {
+						let mut pin = gpio.get((*relay).pin).unwrap().into_output();
+						pin.set_high();
+                        (*relay).active = true;
                         found = true;
                     }
                 }
