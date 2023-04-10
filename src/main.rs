@@ -1,6 +1,6 @@
 #![allow(unreachable_code)]
 
-use std::{sync::Mutex};
+use std::{sync::Mutex, error::Error};
 use rppal::{gpio::Gpio};
 
 #[macro_use]
@@ -23,28 +23,48 @@ struct SerializedRelayList {
 
 fn init_gpio() -> Vec<Relay> {
     let mut relaysnums = Vec::new();
-    relaysnums.push(7);
-    relaysnums.push(3);
+    relaysnums.push(4);
     relaysnums.push(22);
-    relaysnums.push(25);
+    relaysnums.push(6);
+    relaysnums.push(26);
 
     let mut relays = Vec::with_capacity(relaysnums.len());
     for (i, el) in relaysnums.iter().enumerate() {
         relays.push(Relay {
             id: i,
             pin: *el,
-            active: false
+            active: get_status(*el).unwrap()
         });
     }
 
     return relays;
 }
 
+fn set_high(pin: u8) -> Result<(), Box<dyn Error>> {
+    let mut pin = Gpio::new()?.get(pin)?.into_output();
+    pin.set_reset_on_drop(false);
+    pin.set_high();
+    Ok(())
+}
+
+fn set_low(pin: u8) -> Result<(), Box<dyn Error>> {
+    let mut pin = Gpio::new()?.get(pin)?.into_output();
+    pin.set_reset_on_drop(false);
+    pin.set_low();
+    Ok(())
+}
+
+fn get_status(pin: u8) -> Result<bool, Box<dyn Error>> {
+    let mut pin = Gpio::new()?.get(pin)?.into_output();
+    pin.set_reset_on_drop(false);
+    Ok(pin.is_set_high())
+}
+
 fn main() {
     println!("Now listening on 0.0.0.0:8000");
 
     let gpios = Mutex::new(init_gpio());
-
+    
     // The `start_server` starts listening forever on the given address.
     rouille::start_server("0.0.0.0:8000", move |request| {
 
@@ -72,8 +92,6 @@ fn main() {
                 let mut found = false;
                 let relay_num;
 
-				let gpio = Gpio::new().unwrap();
-
                 match request.get_param("id") {
                     Some(index) => relay_num = index.parse::<usize>().unwrap(),
                     None => return rouille::Response::text("Invalid id!"),
@@ -81,10 +99,17 @@ fn main() {
 
                 for relay in lgpios.iter_mut() {
                     if relay_num == relay.id {
-                        (*relay).active = false;
-						let mut pin = gpio.get((*relay).pin).unwrap().into_output();
-						pin.set_low();
-                        found = true;
+                        let result = set_low(relay.pin);
+                        match result {
+                            Ok(_) => {
+                                (*relay).active = false;
+                                found = true;
+                            },
+                            Err(error) => {
+                                println!("Error setting relay to low: {:?}", error);
+                                return rouille::Response::text("Error!")
+                            },
+                        };
                     }
                 }
 
@@ -102,8 +127,6 @@ fn main() {
                 let mut found = false;
                 let relay_num;
 
-				let gpio = Gpio::new().unwrap();
-
                 match request.get_param("id") {
                     Some(index) => relay_num = index.parse::<usize>().unwrap(),
                     None => return rouille::Response::text("Invalid id!"),
@@ -111,10 +134,17 @@ fn main() {
 
                 for relay in lgpios.iter_mut() {
                     if relay_num == relay.id {
-						let mut pin = gpio.get((*relay).pin).unwrap().into_output();
-						pin.set_high();
-                        (*relay).active = true;
-                        found = true;
+						let result = set_high(relay.pin);
+                        match result {
+                            Ok(_) => {
+                                (*relay).active = true;
+                                found = true;
+                            },
+                            Err(error) => {
+                                println!("Error setting relay to high: {:?}", error);
+                                return rouille::Response::text("Error!")
+                            },
+                        };
                     }
                 }
 
